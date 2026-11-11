@@ -46,7 +46,11 @@ import { ERR_OUTDATED_OPTIMIZED_DEP } from '../plugins/optimizedDeps'
 import { getDepsOptimizer, initDepsOptimizer } from '../optimizer'
 import { bindCLIShortcuts } from '../shortcuts'
 import type { BindCLIShortcutsOptions } from '../shortcuts'
-import { CLIENT_DIR, DEFAULT_DEV_PORT } from '../constants'
+import {
+  CLIENT_DIR,
+  DEFAULT_DEV_PORT,
+  defaultAllowedOrigins,
+} from '../constants'
 import type { Logger } from '../logger'
 import { printServerUrls } from '../logger'
 import {
@@ -98,6 +102,7 @@ import { transformRequest } from './transformRequest'
 import { searchForWorkspaceRoot } from './searchRoot'
 import { warmupFiles } from './warmup'
 import { openInEditorGuardMiddleware } from './middlewares/openInEditor'
+import { hostCheckMiddleware } from './middlewares/hostCheck'
 
 export interface ServerOptions extends CommonServerOptions {
   /**
@@ -848,10 +853,23 @@ export async function _createServer(
     middlewares.use(timeMiddleware(root))
   }
 
-  // cors (enabled by default)
+  // cors
   const { cors } = serverConfig
   if (cors !== false) {
-    middlewares.use(corsMiddleware(typeof cors === 'boolean' ? {} : cors))
+    middlewares.use(
+      corsMiddleware(
+        typeof cors === 'boolean'
+          ? {}
+          : (cors ?? { origin: defaultAllowedOrigins }),
+      ),
+    )
+  }
+
+  // host check (to prevent DNS rebinding attacks)
+  const { allowedHosts } = serverConfig
+  // no need to check for HTTPS as HTTPS is not vulnerable to DNS rebinding attacks
+  if (allowedHosts !== true && !serverConfig.https) {
+    middlewares.use(hostCheckMiddleware(config, false))
   }
 
   middlewares.use(cachedTransformMiddleware(server))
