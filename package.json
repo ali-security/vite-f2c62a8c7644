@@ -104,6 +104,7 @@
       "acorn@8.12.1": "patches/acorn@8.12.1.patch",
       "chokidar@3.6.0": "patches/chokidar@3.6.0.patch",
       "http-proxy@1.18.1": "patches/http-proxy@1.18.1.patch",
+      "launch-editor@2.8.1": "patches/launch-editor@2.8.1.patch",
       "sirv@2.0.4": "patches/sirv@2.0.4.patch"
     },
     "peerDependencyRules": {
