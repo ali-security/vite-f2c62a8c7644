@@ -4,6 +4,11 @@
 <pre class="full"></pre>
 <pre class="named"></pre>
 
+<div>
+  <h2>Safe Module Path Access Isolation</h2>
+  <pre class="safe-module-path-status"></pre>
+</div>
+
 <h2>Safe Fetch</h2>
 <pre class="safe-fetch-status"></pre>
 <pre class="safe-fetch"></pre>
@@ -73,6 +78,7 @@
 <script type="module">
   import '../../entry'
   import json, { msg } from '../../safe.json'
+  import 'virtual:safe-module-path-confusion'
   import './code.js'
 
   // Check virtual svg module still works
@@ -371,6 +377,18 @@
   )
     .then((r) => {
       text('.unsafe-fs-fetch-relative-path-after-query-status', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // outside of allowed dir, imported as a module inside root whose
+  // root-relative url looks like the absolute path of this file
+  fetch(
+    joinUrlSegments(base, joinUrlSegments('/@fs/', ROOT) + '/root/unsafe.txt'),
+  )
+    .then((r) => {
+      text('.safe-module-path-status', r.status)
     })
     .catch((e) => {
       console.error(e)

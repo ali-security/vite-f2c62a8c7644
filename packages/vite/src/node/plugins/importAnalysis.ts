@@ -29,7 +29,6 @@ import {
 } from '../server/hmr'
 import {
   createDebugger,
-  fsPathFromUrl,
   generateCodeFrame,
   injectQuery,
   isBuiltin,
@@ -294,7 +293,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         url: string,
         pos: number,
         forceSkipImportAnalysis: boolean = false,
-      ): Promise<[string, string]> => {
+      ): Promise<[string, string | undefined]> => {
         url = stripBase(url, base)
 
         let importerFile = importer
@@ -322,7 +321,7 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
         if (!resolved || resolved.meta?.['vite:alias']?.noResolved) {
           // in ssr, we should let node handle the missing modules
           if (ssr) {
-            return [url, url]
+            return [url, undefined]
           }
           // fix#9534, prevent the importerModuleNode being stopped from propagating updates
           importerModule.isSelfAccepting = false
@@ -538,14 +537,11 @@ export function importAnalysisPlugin(config: ResolvedConfig): Plugin {
             }
 
             // normalize
-            const [url, resolvedId] = await normalizeUrl(specifier, start)
-
-            // record as safe modules
-            // safeModulesPath should not include the base prefix.
-            // See https://github.com/vitejs/vite/issues/9438#issuecomment-1465270409
-            server?.moduleGraph.safeModulesPath.add(
-              fsPathFromUrl(stripBase(url, base)),
-            )
+            let [url, resolvedId] = await normalizeUrl(specifier, start)
+            if (resolvedId) {
+              server?.moduleGraph.safeModulesPath.add(cleanUrl(resolvedId))
+            }
+            resolvedId = resolvedId || url
 
             if (url !== specifier) {
               let rewriteDone = false

@@ -194,6 +194,12 @@ describe.runIf(isServe)('main', () => {
     ).toBe('403')
   })
 
+  test('unsafe fs fetch with url-like safe module path', async () => {
+    await expect
+      .poll(() => page.textContent('.safe-module-path-status'))
+      .toBe('403')
+  })
+
   test('nested entry', async () => {
     expect(await page.textContent('.nested-entry')).toBe('foobar')
   })
