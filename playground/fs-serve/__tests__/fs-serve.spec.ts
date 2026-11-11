@@ -536,6 +536,23 @@ describe.runIf(isServe)('invalid request', () => {
     expect(response).toContain('HTTP/1.1 403 Forbidden')
   })
 
+  test('should deny request to denied file when a request ends with \\', async () => {
+    const response = await sendRawRequest(viteTestUrl, '/src/.env\\')
+    expect(response).toContain(
+      isWindows ? 'HTTP/1.1 403 Forbidden' : 'HTTP/1.1 404 Not Found',
+    )
+  })
+
+  test('should deny request to denied file when a request ends with \\ with /@fs/', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root, 'root/src/.env') + '\\',
+    )
+    expect(response).toContain(
+      isWindows ? 'HTTP/1.1 403 Forbidden' : 'HTTP/1.1 404 Not Found',
+    )
+  })
+
   test('should deny request with /@fs/ to denied file when a request has /.', async () => {
     const response = await sendRawRequest(
       viteTestUrl,

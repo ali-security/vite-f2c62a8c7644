@@ -1,4 +1,5 @@
 import path from 'node:path'
+import picomatch from 'picomatch'
 import { describe, expect, test } from 'vitest'
 import type { ViteDevServer } from '../../index'
 import { isWindows } from '../../../../shared/utils'
@@ -179,5 +180,25 @@ describe('isFileLoadingAllowed', () => {
   test.runIf(isWindows)('denies a path with an 8.3 short name', () => {
     expect(isAllowed(`${root}/ENV~1`)).toBe(false)
     expect(isAllowed(`${root}/GIT~1/config`)).toBe(false)
+  })
+
+  // `fs.readFile('/foo/.env/')` reads `/foo/.env`, and on Windows a request
+  // ending with `\` is normalized to a path ending with `/`
+  test('denies a denied file with a trailing slash', () => {
+    const denyGlobServer = {
+      ...server,
+      // same matcher options as the dev server's `_fsDenyGlob`
+      _fsDenyGlob: picomatch(['**/.env', '**/.env.*', '**/*.{crt,pem}'], {
+        matchBase: false,
+        nocase: true,
+        dot: true,
+      }),
+    } as unknown as ViteDevServer
+    const isAllowedByGlob = (p: string) =>
+      isFileLoadingAllowed(denyGlobServer, p)
+    expect(isAllowedByGlob(`${root}/src/main.js`)).toBe(true)
+    expect(isAllowedByGlob(`${root}/.env`)).toBe(false)
+    expect(isAllowedByGlob(`${root}/.env/`)).toBe(false)
+    expect(isAllowedByGlob(`${root}/src/dummy.crt/`)).toBe(false)
   })
 })
