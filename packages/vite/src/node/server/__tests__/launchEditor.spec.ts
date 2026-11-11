@@ -39,6 +39,7 @@ const launchEditor: LaunchEditor = _require(launchEditorPath)
 // is called, so stubbing them intercepts the editor process it would launch
 const childProcess = _require('node:child_process')
 const nodeFs = _require('node:fs')
+const nodeOs = _require('node:os')
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!
 
@@ -77,6 +78,16 @@ const REJECTED_FILE_NAMES = [
   'C:\\project\\file.js\ncalc.exe',
   'C:\\project\\file.js\r\ncalc.exe',
   'C:\\project\\file.js\r&calc.exe',
+]
+
+// file names that editors would take for options running arbitrary commands
+const OPTION_LIKE_FILES = [
+  ['vim', '+call writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['mvim', '-ccall writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['gvim', '+call writefile(["marker"], "LAUNCH_EDITOR_MARKER")|qa!'],
+  ['emacs', '--eval=(write-region "marker" nil "LAUNCH_EDITOR_MARKER")'],
+  ['emacsclient', '-eatouch LAUNCH_EDITOR_MARKER'],
+  ['notepad++', '-pluginMessage=LAUNCH_EDITOR_MARKER'],
 ]
 
 function createFakeChildProcess() {
@@ -198,7 +209,9 @@ describe('launch-editor (CVE-2024-52011)', () => {
       const res = { end: vi.fn() }
       createMiddleware()({ url: `/?file=${encodeURIComponent(file)}` }, res)
       expect(res.end).toHaveBeenCalledTimes(1)
-      expectLaunchCommand(`code ^"${FILE_ROOT}a^&calc.exe.js^"`)
+      // launch-editor passes the file to the editor by its absolute path
+      const launchedFile = path.win32.resolve(FILE_ROOT, 'a^&calc.exe.js')
+      expectLaunchCommand(`code ^"${launchedFile}^"`)
     })
 
     test('rejects "%" in /__open-in-editor requests', () => {
@@ -223,6 +236,136 @@ describe('launch-editor (CVE-2024-52011)', () => {
       expect(exec).not.toHaveBeenCalled()
       expect(spawn).toHaveBeenCalledWith('code', [file], SPAWN_OPTIONS)
       expect(onError).not.toHaveBeenCalled()
+    })
+  })
+})
+
+describe('launch-editor (CVE-2026-112944)', () => {
+  let exec = vi.fn(createFakeChildProcess)
+  let spawn = vi.fn((..._args: unknown[]) => createFakeChildProcess())
+  let onError = vi.fn()
+
+  beforeEach(() => {
+    exec = vi.fn(createFakeChildProcess)
+    spawn = vi.fn((..._args: unknown[]) => createFakeChildProcess())
+    onError = vi.fn()
+    vi.spyOn(childProcess, 'exec').mockImplementation(exec)
+    vi.spyOn(childProcess, 'spawn').mockImplementation(spawn)
+    vi.spyOn(nodeFs, 'existsSync').mockReturnValue(true)
+    // launch-editor logs the files it could not open
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    restorePlatform()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  describe('on Windows', () => {
+    beforeEach(() => {
+      setPlatform('win32')
+    })
+
+    test('passes the editor an absolute path', () => {
+      launchEditor('-pluginMessage=LAUNCH_EDITOR_MARKER', 'notepad++', onError)
+      const file = path.win32.resolve('-pluginMessage=LAUNCH_EDITOR_MARKER')
+      expect(spawn).not.toHaveBeenCalled()
+      expect(onError).not.toHaveBeenCalled()
+      expect(exec).toHaveBeenCalledWith(
+        `notepad++ ^"${file.replace('=', '^=')}^"`,
+        EXEC_OPTIONS,
+      )
+    })
+  })
+
+  // launch-editor resolves file names with the path semantics of the mocked
+  // platform, which only match those of `path` on POSIX hosts
+  describe.skipIf(isWindows)('on other platforms', () => {
+    beforeEach(() => {
+      setPlatform('linux')
+    })
+
+    test('resolves a relative file name to an absolute path', () => {
+      launchEditor('src/main.ts', 'code', onError)
+      expect(exec).not.toHaveBeenCalled()
+      expect(spawn).toHaveBeenCalledWith(
+        'code',
+        [path.resolve('src/main.ts')],
+        SPAWN_OPTIONS,
+      )
+    })
+
+    test.each(OPTION_LIKE_FILES)('%s gets an absolute %j', (editor, file) => {
+      launchEditor(file, editor, onError)
+      launchEditor(`${file}:10:5`, editor, onError)
+      expect(exec).not.toHaveBeenCalled()
+      expect(onError).not.toHaveBeenCalled()
+      expect(spawn).toHaveBeenCalledTimes(2)
+      for (const [command, args] of spawn.mock.calls as [string, string[]][]) {
+        expect(command).toBe(editor)
+        expect(args).not.toContain(file)
+        expect(args[args.length - 1]).toBe(path.resolve(file))
+        expect(path.isAbsolute(args[args.length - 1])).toBe(true)
+      }
+    })
+  })
+
+  // launch-editor converts paths for WSL with `path.relative` of the host
+  describe.skipIf(isWindows)('on WSL', () => {
+    // vim would run the command if it took this file name for an option
+    const optionLikeFile = '+call system("touch LAUNCH_EDITOR_MARKER")'
+
+    beforeEach(() => {
+      setPlatform('linux')
+      vi.spyOn(nodeOs, 'release').mockReturnValue('4.4.0-43-Microsoft')
+      vi.spyOn(process, 'cwd').mockReturnValue('/mnt/c/project')
+    })
+
+    test('uses a relative path for files on a Windows drive', () => {
+      vi.spyOn(process, 'cwd').mockReturnValue('/home/user/project')
+      launchEditor('/mnt/c/project/file.js', 'vim', onError)
+      expect(spawn).toHaveBeenCalledWith(
+        'vim',
+        ['./../../../mnt/c/project/file.js'],
+        SPAWN_OPTIONS,
+      )
+    })
+
+    test('resolves a relative file name before converting it', () => {
+      launchEditor('file.js', 'vim', onError)
+      expect(spawn).toHaveBeenCalledWith('vim', ['./file.js'], SPAWN_OPTIONS)
+    })
+
+    test('prefixes an option-like file name', () => {
+      launchEditor(`/mnt/c/project/${optionLikeFile}`, 'vim', onError)
+      expect(spawn).toHaveBeenCalledWith(
+        'vim',
+        [`./${optionLikeFile}`],
+        SPAWN_OPTIONS,
+      )
+    })
+
+    test('prefixes an option-like file name with a position', () => {
+      launchEditor(`/mnt/c/project/${optionLikeFile}:10:5`, 'vim', onError)
+      expect(spawn).toHaveBeenCalledWith(
+        'vim',
+        ['+call cursor(10, 5)', `./${optionLikeFile}`],
+        SPAWN_OPTIONS,
+      )
+    })
+
+    test('prefixes option-like files in /__open-in-editor requests', () => {
+      vi.stubEnv('LAUNCH_EDITOR', 'vim')
+      const file = `/mnt/c/project/${optionLikeFile}`
+      const res = { end: vi.fn() }
+      createMiddleware()({ url: `/?file=${encodeURIComponent(file)}` }, res)
+      expect(res.end).toHaveBeenCalledTimes(1)
+      expect(spawn).toHaveBeenCalledWith(
+        'vim',
+        [`./${optionLikeFile}`],
+        SPAWN_OPTIONS,
+      )
     })
   })
 })
