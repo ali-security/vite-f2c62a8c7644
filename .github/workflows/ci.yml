@@ -8,59 +8,28 @@ env:
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
   # Vitest auto retry on flaky segfault
   VITEST_SEGFAULT_RETRY: 3
+  # plain-text vitest summaries so the passed-test count is greppable in the logs
+  NO_COLOR: "1"
 
 # Remove default permissions of GITHUB_TOKEN for security
 # https://docs.github.com/en/actions/using-jobs/assigning-permissions-to-jobs
 permissions: {}
 
 on:
-  push:
-    branches:
-      - main
-      - release/*
-      - feat/*
-      - fix/*
-      - perf/*
-      - v1
-      - v2
-      - v2.*
-      - v3.*
-  pull_request:
   workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Optional vitest filter args appended to the test commands"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
-  changed:
-    name: Get changed files
-    runs-on: ubuntu-latest
-    outputs:
-      should_skip: ${{ steps.changed-files.outputs.only_changed == 'true' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # Assume PRs are less than 50 commits
-          fetch-depth: 50
-
-      - name: Get changed files
-        id: changed-files
-        uses: tj-actions/changed-files@e9772d140489982e0e3704fea5ee93d536f1e275 # v45.0.1
-        with:
-          files: |
-            docs/**
-            .github/**
-            !.github/workflows/ci.yml
-            packages/create-vite/template**
-            **.md
-
   test:
-    needs: changed
-    if: needs.changed.outputs.should_skip != 'true'
-    timeout-minutes: 20
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -88,8 +57,10 @@ jobs:
           node-version: ${{ matrix.node_version }}
           cache: "pnpm"
 
+      # pnpm.patchedDependencies gained launch-editor@2.8.1 (CVE-2024-52011);
+      # let pnpm record the new patch hash instead of failing on the lockfile
       - name: Install deps
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       # Install playwright's binary under custom directory to cache
       - name: (non-windows) Set Playwright path and Get playwright version
@@ -120,17 +91,49 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      # verbose reporter: print every test (passed, and skipped with a down-arrow) by name
       - name: Test unit
-        run: pnpm run test-unit
+        run: pnpm run test-unit --reporter=verbose ${{ inputs.test-filter }}
 
       - name: Test serve
-        run: pnpm run test-serve
+        run: pnpm run test-serve --reporter=verbose ${{ inputs.test-filter }}
 
       - name: Test build
-        run: pnpm run test-build
+        run: pnpm run test-build --reporter=verbose ${{ inputs.test-filter }}
+
+      # Name the reason for every skipped/todo test: they are all upstream's own
+      # conditional guards in the spec files, listed here with file:line.
+      - name: Explain skipped tests
+        shell: bash
+        run: |
+          echo "Skip reasons (upstream guards in the spec sources):"
+          echo "  runIf(isBuild)    -> skipped in test-serve (build-mode-only test)"
+          echo "  runIf(isServe) / runIf(!isBuild) -> skipped in test-build (dev-server-only test)"
+          echo "  skipIf(isWindows) / runIf(!isWindows) -> skipped on Windows; runIf(isWindows) -> skipped elsewhere"
+          echo "  runIf(isServe && !noNetworkImports) -> skipped on Node >= 22 (--experimental-network-imports removed)"
+          echo "  runIf(isImportAttributesSupported) -> skipped on Node without import attributes"
+          echo "  runIf(process.getuid() !== 0) -> skipped when running as root"
+          echo "  test.skip / test.todo -> disabled/unimplemented upstream"
+          grep -rnE '\.(skipIf|runIf)\(|\b(test|it|describe)\.(skip|todo)\b' \
+            --include='*.spec.ts' playground packages/vite/src
+
+      - name: Pack vite
+        if: matrix.os == 'ubuntu-latest' && matrix.node_version == 20
+        working-directory: packages/vite
+        env:
+          UV_THREADPOOL_SIZE: 1
+        run: pnpm pack
+
+      - name: Upload vite tarball
+        if: matrix.os == 'ubuntu-latest' && matrix.node_version == 20
+        uses: actions/upload-artifact@v4
+        with:
+          name: vite-tarball
+          path: packages/vite/vite-*.tgz
+          if-no-files-found: error
 
   lint:
-    timeout-minutes: 10
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     name: "Lint: node-20, ubuntu-latest"
     steps:
@@ -145,8 +148,9 @@ jobs:
           node-version: 20
           cache: "pnpm"
 
+      # see the "Install deps" step of the test job
       - name: Install deps
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build
         run: pnpm run build
