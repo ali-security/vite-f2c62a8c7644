@@ -97,6 +97,7 @@ import type { TransformOptions, TransformResult } from './transformRequest'
 import { transformRequest } from './transformRequest'
 import { searchForWorkspaceRoot } from './searchRoot'
 import { warmupFiles } from './warmup'
+import { openInEditorGuardMiddleware } from './middlewares/openInEditor'
 
 export interface ServerOptions extends CommonServerOptions {
   /**
@@ -869,6 +870,8 @@ export async function _createServer(
   }
 
   // open in editor support
+  // reject UNC paths before launch-editor accesses them (NTLM leak on Windows)
+  middlewares.use('/__open-in-editor', openInEditorGuardMiddleware())
   middlewares.use('/__open-in-editor', launchEditorMiddleware())
 
   // ping request handler
