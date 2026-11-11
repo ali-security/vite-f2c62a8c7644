@@ -39,6 +39,7 @@ import {
   normalizePath,
   processSrcSetSync,
   stripBase,
+  tryStatSync,
 } from '../../utils'
 import { getFsUtils } from '../../fsUtils'
 import { checkPublicFile } from '../../publicDir'
@@ -98,11 +99,12 @@ export function createDevHtmlTransformFn(
 }
 
 function getHtmlFilename(url: string, server: ViteDevServer) {
-  if (url.startsWith(FS_PREFIX)) {
-    return decodeURIComponent(fsPathFromId(url))
+  const urlPath = cleanUrl(url)
+  if (urlPath.startsWith(FS_PREFIX)) {
+    return decodeURIComponent(fsPathFromId(urlPath))
   } else {
     return decodeURIComponent(
-      normalizePath(path.join(server.config.root, url.slice(1))),
+      normalizePath(path.join(server.config.root, urlPath.slice(1))),
     )
   }
 }
@@ -118,6 +120,8 @@ const wordCharRE = /\w/
 function isBareRelative(url: string) {
   return wordCharRE.test(url[0]) && !url.includes(':')
 }
+
+const multipleLeadingSlashesRE = /^\/{2,}/g
 
 const isSrcSet = (attr: Token.Attribute) =>
   attr.name === 'srcset' && attr.prefix === undefined
@@ -190,6 +194,13 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   html,
   { path: htmlPath, filename, server, originalUrl },
 ) => {
+  // There's no way to express a relative URL that starts with `//`. URLs starting with `//` is relative to the scheme.
+  // The relative URL is needed to generate the URL in script tags and link tags.
+  // We replace `//` with `/` here for workaround, which is the best we can do.
+  if (htmlPath.startsWith('//')) {
+    htmlPath = htmlPath.replace(multipleLeadingSlashesRE, '/')
+  }
+
   const { config, moduleGraph, watcher } = server!
   const base = config.base || '/'
   const decodedBase = config.decodedBase || '/'
@@ -198,7 +209,8 @@ const devHtmlHook: IndexHtmlTransformHook = async (
   let proxyModuleUrl: string
 
   const trailingSlash = htmlPath.endsWith('/')
-  if (!trailingSlash && getFsUtils(config).existsSync(filename)) {
+  if (!trailingSlash && tryStatSync(filename)?.isFile()) {
+    ensureWatchedFile(watcher, filename, config.root)
     proxyModulePath = htmlPath
     proxyModuleUrl = proxyModulePath
   } else {
@@ -361,7 +373,6 @@ const devHtmlHook: IndexHtmlTransformHook = async (
 
       // ensure module in graph after successful load
       const mod = await moduleGraph.ensureEntryFromUrl(url, false)
-      ensureWatchedFile(watcher, mod.file, config.root)
 
       const result = await server!.pluginContainer.transform(code, mod.id!)
       let content = ''
@@ -386,7 +397,6 @@ const devHtmlHook: IndexHtmlTransformHook = async (
       const url = `${proxyModulePath}?html-proxy&inline-css&style-attr&index=${index}.css`
 
       const mod = await moduleGraph.ensureEntryFromUrl(url, false)
-      ensureWatchedFile(watcher, mod.file, config.root)
 
       await server?.pluginContainer.transform(code, mod.id!)
 
