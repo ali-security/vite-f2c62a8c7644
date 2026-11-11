@@ -2,7 +2,11 @@ import path from 'node:path'
 import { describe, expect, test } from 'vitest'
 import type { ViteDevServer } from '../../index'
 import { isWindows } from '../../../../shared/utils'
-import { isFileServingAllowed, looksLikeWindowsShortNamePath } from '../static'
+import {
+  isFileLoadingAllowed,
+  isFileServingAllowed,
+  looksLikeWindowsShortNamePath,
+} from '../static'
 
 describe('looksLikeWindowsShortNamePath', () => {
   const shortNamePaths = [
@@ -115,5 +119,37 @@ describe('isFileServingAllowed', () => {
     const lowercaseServer = createStubServer('c:/allowed')
     const filePath = 'c:/allowed/src/main.js'
     expect(isFileServingAllowed(filePath, lowercaseServer)).toBe(true)
+  })
+})
+
+// `isFileLoadingAllowed` receives the resolved file path (e.g. from sirv's
+// `shouldServe`), so it must apply the same checks as `isFileServingAllowed`
+describe('isFileLoadingAllowed', () => {
+  const root = isWindows ? 'C:/allowed' : '/allowed'
+  const server = createStubServer(root)
+  const isAllowed = (p: string) => isFileLoadingAllowed(server, p)
+
+  test('allows a file inside fs.allow', () => {
+    expect(isAllowed(`${root}/src/main.js`)).toBe(true)
+  })
+
+  test('denies a file matching fs.deny', () => {
+    expect(isAllowed(`${root}/.env`)).toBe(false)
+    expect(isAllowed(`${root}/.git/config`)).toBe(false)
+  })
+
+  test('denies a file outside of fs.allow', () => {
+    const outside = isWindows ? 'C:/other/a.txt' : '/other/a.txt'
+    expect(isAllowed(outside)).toBe(false)
+  })
+
+  test('denies a path with an NTFS ADS suffix', () => {
+    expect(isAllowed(`${root}/.env::$DATA`)).toBe(false)
+    expect(isAllowed(`${root}/.env:stream`)).toBe(false)
+  })
+
+  test.runIf(isWindows)('denies a path with an 8.3 short name', () => {
+    expect(isAllowed(`${root}/ENV~1`)).toBe(false)
+    expect(isAllowed(`${root}/GIT~1/config`)).toBe(false)
   })
 })

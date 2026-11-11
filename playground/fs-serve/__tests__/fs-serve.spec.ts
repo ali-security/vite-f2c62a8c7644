@@ -512,4 +512,17 @@ describe.runIf(isServe)('invalid request', () => {
       expect(response).toContain('Cache-Control: no-cache')
     }
   })
+
+  test('should deny request to denied file when a request has /.', async () => {
+    const response = await sendRawRequest(viteTestUrl, '/src/dummy.crt/.')
+    expect(response).toContain('HTTP/1.1 403 Forbidden')
+  })
+
+  test('should deny request with /@fs/ to denied file when a request has /.', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root, 'root/src/dummy.crt/') + '.',
+    )
+    expect(response).toContain('HTTP/1.1 403 Forbidden')
+  })
 })
