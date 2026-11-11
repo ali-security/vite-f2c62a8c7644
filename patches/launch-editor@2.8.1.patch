@@ -108,7 +108,33 @@ index 55e731607a43e51b09d5d7656d8e2b9761afad68..7b1c39e8de39cccf5143619f34667903
      _childProcess = childProcess.spawn(editor, args, { stdio: 'inherit' })
    }
 diff --git a/index.js b/index.js
-index 7b1c39e8de39cccf5143619f3466790326b25f8a..18559ee3fe8f8001bdc2867392744a40a7edaeac 100644
+index 7b1c39e8de39cccf5143619f3466790326b25f8a..efd59f54094c18923985f594104da6ff35346362 100644
+--- a/index.js
++++ b/index.js
+@@ -48,15 +48,15 @@ function isTerminalEditor (editor) {
+ 
+ const positionRE = /:(\d+)(:(\d+))?$/
+ function parseFile (file) {
+-  const fileName = file.replace(positionRE, '')
++  // Resolve the file name once the position is stripped, so that the file
++  // checked for existence is the one opened: `C:\a\b\..:1:1` is `C:\a`, not
++  // `C:\a\b\..`. Keep an empty file name, which would resolve to the cwd.
++  const unresolvedFileName = file.replace(positionRE, '')
++  const fileName = unresolvedFileName ? (process.platform === 'win32' ? path.win32 : path.posix).resolve(unresolvedFileName) : ''
+   const match = file.match(positionRE)
+   const lineNumber = match && match[1]
+   const columnNumber = match && match[3]
+-  return {
+-    fileName,
+-    lineNumber,
+-    columnNumber
+-  }
++  return { fileName, lineNumber, columnNumber }
+ }
+ 
+ let _childProcess = null
+diff --git a/index.js b/index.js
+index efd59f54094c18923985f594104da6ff35346362..ad65bd8f76315cc8d8ebc607b72eed559f982ec8 100644
 --- a/index.js
 +++ b/index.js
 @@ -84,4 +84,8 @@ function launchEditor (file, specifiedEditor, onErrorCallback) {

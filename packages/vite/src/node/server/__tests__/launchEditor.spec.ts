@@ -370,6 +370,92 @@ describe('launch-editor (CVE-2026-112944)', () => {
   })
 })
 
+// https://github.com/vitejs/launch-editor/security/advisories/GHSA-587h-7wmj-h5pm
+describe('launch-editor (CVE-2026-112942)', () => {
+  let exec = vi.fn(createFakeChildProcess)
+  let spawn = vi.fn(createFakeChildProcess)
+  let onError = vi.fn()
+  // an empty file name does not exist, like with `fs`; every other file does
+  let existsSync = vi.fn((file: string) => file !== '')
+
+  beforeEach(() => {
+    exec = vi.fn(createFakeChildProcess)
+    spawn = vi.fn(createFakeChildProcess)
+    onError = vi.fn()
+    existsSync = vi.fn((file: string) => file !== '')
+    vi.spyOn(childProcess, 'exec').mockImplementation(exec)
+    vi.spyOn(childProcess, 'spawn').mockImplementation(spawn)
+    vi.spyOn(nodeFs, 'existsSync').mockImplementation(existsSync)
+    // launch-editor logs the files it could not open
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    restorePlatform()
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  describe('on Windows', () => {
+    beforeEach(() => {
+      setPlatform('win32')
+    })
+
+    // `fs.existsSync` normalizes `..` on Windows, so the directory before it
+    // passed the check without existing once `:1:1` was stripped
+    const files = [
+      'C:\\project\\a&calc.exe\\..:1:1',
+      'C:\\project\\%PATH%\\..:1:1',
+    ]
+
+    test.each(files)('checks the resolved file of %j', (file) => {
+      launchEditor(file, 'code', onError)
+      expect(existsSync).toHaveBeenCalledTimes(1)
+      expect(existsSync).toHaveBeenCalledWith('C:\\project')
+      expect(onError).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      expect(exec).toHaveBeenCalledTimes(1)
+      expect(exec).toHaveBeenCalledWith(
+        'code -r -g C:\\project:1:1',
+        EXEC_OPTIONS,
+      )
+    })
+
+    test('does not resolve an empty file name', () => {
+      launchEditor(':1:1', 'code', onError)
+      expect(existsSync).toHaveBeenCalledWith('')
+      expect(exec).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('on other platforms', () => {
+    beforeEach(() => {
+      setPlatform('linux')
+    })
+
+    test('checks the resolved file name', () => {
+      launchEditor('/project/a&calc.exe/..:1:1', 'code', onError)
+      expect(existsSync).toHaveBeenCalledTimes(1)
+      expect(existsSync).toHaveBeenCalledWith('/project')
+      expect(onError).not.toHaveBeenCalled()
+      expect(exec).not.toHaveBeenCalled()
+      expect(spawn).toHaveBeenCalledWith(
+        'code',
+        ['-r', '-g', '/project:1:1'],
+        SPAWN_OPTIONS,
+      )
+    })
+
+    test('does not resolve an empty file name', () => {
+      launchEditor(':1:1', 'code', onError)
+      expect(existsSync).toHaveBeenCalledWith('')
+      expect(exec).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+    })
+  })
+})
+
 describe.runIf(isWindows)('/__open-in-editor on Windows', () => {
   let tmpDir: string
   let server: ViteDevServer | undefined
