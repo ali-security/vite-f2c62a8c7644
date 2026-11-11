@@ -1,7 +1,9 @@
+import net from 'node:net'
+import path from 'node:path'
 import fetch from 'node-fetch'
 import { beforeAll, describe, expect, test } from 'vitest'
 import testJSON from '../safe.json'
-import { isServe, page, viteTestUrl } from '~utils'
+import { isServe, isWindows, page, viteTestUrl } from '~utils'
 
 const stringified = JSON.stringify(testJSON)
 
@@ -149,5 +151,64 @@ describe('fetch', () => {
   test('serve with configured headers', async () => {
     const res = await fetch(viteTestUrl + '/src/')
     expect(res.headers.get('x-served-by')).toBe('vite')
+  })
+})
+
+describe.runIf(isServe)('invalid request', () => {
+  const sendRawRequest = async (baseUrl: string, requestTarget: string) => {
+    return new Promise<string>((resolve, reject) => {
+      const parsedUrl = new URL(baseUrl)
+
+      const buf: Buffer[] = []
+      const client = net.createConnection(
+        { port: +parsedUrl.port, host: parsedUrl.hostname },
+        () => {
+          client.write(
+            [
+              `GET ${encodeURI(requestTarget)} HTTP/1.1`,
+              `Host: ${parsedUrl.host}`,
+              'Connection: Close',
+              '\r\n',
+            ].join('\r\n'),
+          )
+        },
+      )
+      client.on('data', (data) => {
+        buf.push(data)
+      })
+      client.on('end', () => {
+        resolve(Buffer.concat(buf).toString())
+      })
+      client.on('error', (err) => {
+        reject(err)
+      })
+    })
+  }
+
+  const root = path
+    .resolve(__dirname.replace('playground', 'playground-temp'), '..')
+    .replace(/\\/g, '/')
+
+  test('should not allow relative path traversal with optimize deps sourcemap handler', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root) +
+        '/node_modules/.vite/deps/../../../unsafe.map',
+    )
+    expect(response).toContain('HTTP/1.1 403 Forbidden')
+  })
+
+  test('should not allow backslash relative path traversal with optimize deps sourcemap handler', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root) +
+        '/node_modules/.vite/deps/..\\..\\..\\unsafe.map',
+    )
+    if (isWindows) {
+      expect(response).toContain('HTTP/1.1 403 Forbidden')
+    } else {
+      // should be 404 fallback
+      expect(response).toContain('Cache-Control: no-cache')
+    }
   })
 })
