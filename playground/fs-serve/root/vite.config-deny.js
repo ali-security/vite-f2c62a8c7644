@@ -4,6 +4,7 @@ import svgVirtualModulePlugin from './svgVirtualModulePlugin'
 
 export default defineConfig({
   build: {
+    outDir: 'dist/deny',
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'src/index.html'),

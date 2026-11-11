@@ -8,6 +8,12 @@ describe.runIf(isServe)('main', () => {
     )
     expect(res.status()).toBe(403)
   })
+  test('**/deny/** should deny src/deny/deny.html', async () => {
+    const res = await page.request.fetch(
+      new URL('/src/deny/deny.html', viteTestUrl).href,
+    )
+    expect(res.status()).toBe(403)
+  })
   test('**/deny/** should deny src/deny/.deny', async () => {
     const res = await page.request.fetch(
       new URL('/src/deny/.deny', viteTestUrl).href,

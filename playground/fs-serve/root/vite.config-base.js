@@ -8,6 +8,7 @@ const BASE = '/base/'
 export default defineConfig({
   base: BASE,
   build: {
+    outDir: 'dist/base',
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'src/index.html'),
