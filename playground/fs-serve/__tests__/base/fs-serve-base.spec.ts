@@ -1,6 +1,7 @@
 import fetch from 'node-fetch'
 import { beforeAll, describe, expect, test } from 'vitest'
 import testJSON from '../../safe.json'
+import { getWindows83ShortNameForDotEnv } from '../../root/windows83Filename'
 import { isServe, page, viteTestUrl } from '~utils'
 
 const stringified = JSON.stringify(testJSON)
@@ -104,6 +105,23 @@ describe.runIf(isServe)('main', () => {
     const code = await page.textContent('.unsafe-dotEnV-casing')
     expect(code === '403' || code === '404').toBeTruthy()
   })
+
+  test('denied .env with NTFS ADS suffix', async () => {
+    // It is 403 on NTFS, 404 on others
+    await expect
+      .poll(() => page.textContent('.unsafe-dotenv-ntfs-ads'))
+      .toMatch(/^(?:403|404)$/)
+  })
+
+  const dotEnvWindows83ShortName = getWindows83ShortNameForDotEnv()
+  test.skipIf(dotEnvWindows83ShortName === undefined)(
+    'denied .env with 8.3 short name',
+    async () => {
+      await expect
+        .poll(() => page.textContent('.unsafe-dotenv-83-short-name'))
+        .toBe('403')
+    },
+  )
 })
 
 describe('fetch', () => {
