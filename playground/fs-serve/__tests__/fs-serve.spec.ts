@@ -458,6 +458,38 @@ describe.runIf(isServe)('invalid request', () => {
     .resolve(__dirname.replace('playground', 'playground-temp'), '..')
     .replace(/\\/g, '/')
 
+  test('request with sendRawRequest should work', async () => {
+    const response = await sendRawRequest(viteTestUrl, '/src/safe.txt')
+    expect(response).toContain('HTTP/1.1 200 OK')
+    expect(response).toContain('KEY=safe')
+  })
+
+  test('request with sendRawRequest should work with /@fs/', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root, 'root/src/safe.txt'),
+    )
+    expect(response).toContain('HTTP/1.1 200 OK')
+    expect(response).toContain('KEY=safe')
+  })
+
+  test('should reject request that has # in request-target', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      '/src/safe.txt#/../../unsafe.txt',
+    )
+    expect(response).toContain('HTTP/1.1 400 Bad Request')
+  })
+
+  test('should reject request that has # in request-target with /@fs/', async () => {
+    const response = await sendRawRequest(
+      viteTestUrl,
+      path.posix.join('/@fs/', root, 'root/src/safe.txt') +
+        '#/../../unsafe.txt',
+    )
+    expect(response).toContain('HTTP/1.1 400 Bad Request')
+  })
+
   test('should not allow relative path traversal with optimize deps sourcemap handler', async () => {
     const response = await sendRawRequest(
       viteTestUrl,
