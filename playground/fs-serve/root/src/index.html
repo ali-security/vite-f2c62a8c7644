@@ -25,6 +25,8 @@
 <pre class="unsafe-fetch-8498-2"></pre>
 <pre class="unsafe-fetch-import-inline-status"></pre>
 <pre class="unsafe-fetch-raw-query-import-status"></pre>
+<pre class="unsafe-fetch-query-dot-svg-import-status"></pre>
+<pre class="unsafe-fetch-svg-status"></pre>
 
 <h2>Safe /@fs/ Fetch</h2>
 <pre class="safe-fs-fetch-status"></pre>
@@ -49,6 +51,7 @@
 <pre class="unsafe-fs-fetch-8498-2"></pre>
 <pre class="unsafe-fs-fetch-import-inline-status"></pre>
 <pre class="unsafe-fs-fetch-import-inline-wasm-init-status"></pre>
+<pre class="unsafe-fs-fetch-relative-path-after-query-status"></pre>
 
 <h2>Nested Entry</h2>
 <pre class="nested-entry"></pre>
@@ -58,11 +61,18 @@
 <pre class="unsafe-dotEnV-casing"></pre>
 <pre class="unsafe-dotenv-ntfs-ads"></pre>
 <pre class="unsafe-dotenv-83-short-name"></pre>
+<pre class="unsafe-dotenv-query-dot-svg-wasm-init"></pre>
+
+<d2>Virtual SVG module</d2>
+<pre class="virtual-svg"></pre>
 
 <script type="module">
   import '../../entry'
   import json, { msg } from '../../safe.json'
   import './code.js'
+
+  // Check virtual svg module still works
+  import fooSvg from 'virtual:foo.svg'
 
   function joinUrlSegments(a, b) {
     if (!a || !b) {
@@ -79,6 +89,7 @@
 
   text('.full', JSON.stringify(json))
   text('.named', msg)
+  text('.virtual-svg', fooSvg)
 
   const base = typeof BASE !== 'undefined' ? BASE : ''
   const dotEnvWindows83ShortName =
@@ -181,6 +192,24 @@
   fetch(joinUrlSegments(base, '/unsafe.txt?raw?import'))
     .then((r) => {
       text('.unsafe-fetch-raw-query-import-status', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // outside of allowed dir with .svg query import
+  fetch(joinUrlSegments(base, '/unsafe.txt?.svg?import'))
+    .then((r) => {
+      text('.unsafe-fetch-query-dot-svg-import-status', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // svg outside of allowed dir, treated as unsafe
+  fetch(joinUrlSegments(base, '/unsafe.svg?import'))
+    .then((r) => {
+      text('.unsafe-fetch-svg-status', r.status)
     })
     .catch((e) => {
       console.error(e)
@@ -302,6 +331,21 @@
       console.error(e)
     })
 
+  // outside of root with relative path after query
+  fetch(
+    joinUrlSegments(
+      base,
+      joinUrlSegments('/@fs/', ROOT) +
+        '/root/src/?/../../unsafe.txt?import&raw',
+    ),
+  )
+    .then((r) => {
+      text('.unsafe-fs-fetch-relative-path-after-query-status', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
   // outside root with special characters #8498
   fetch(
     joinUrlSegments(
@@ -393,6 +437,20 @@
   )
     .then((r) => {
       text('.unsafe-dotenv-83-short-name', r.status)
+    })
+    .catch((e) => {
+      console.error(e)
+    })
+
+  // .env with .svg?.wasm?init
+  fetch(
+    joinUrlSegments(
+      base,
+      joinUrlSegments('/@fs/', ROOT) + '/root/src/.env?.svg?.wasm?init',
+    ),
+  )
+    .then((r) => {
+      text('.unsafe-dotenv-query-dot-svg-wasm-init', r.status)
     })
     .catch((e) => {
       console.error(e)

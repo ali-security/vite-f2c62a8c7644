@@ -268,27 +268,51 @@ export function isFileServingAllowed(
   return false
 }
 
+export function checkServingAccess(
+  url: string,
+  server: ViteDevServer,
+): 'allowed' | 'denied' | 'fallback' {
+  if (isFileServingAllowed(url, server)) {
+    return 'allowed'
+  }
+  if (isFileReadable(cleanUrl(url))) {
+    return 'denied'
+  }
+  // if the file doesn't exist, we shouldn't restrict this path as it can
+  // be an API call. Middlewares would issue a 404 if the file isn't handled
+  return 'fallback'
+}
+
+export function respondWithAccessDenied(
+  url: string,
+  server: ViteDevServer,
+  res: ServerResponse,
+): void {
+  const urlMessage = `The request url "${url}" is outside of Vite serving allow list.`
+  const hintMessage = `
+${server.config.server.fs.allow.map((i) => `- ${i}`).join('\n')}
+
+Refer to docs https://vitejs.dev/config/server-options.html#server-fs-allow for configurations and more details.`
+
+  server.config.logger.error(urlMessage)
+  server.config.logger.warnOnce(hintMessage + '\n')
+  res.statusCode = 403
+  res.write(renderRestrictedErrorHTML(urlMessage + '\n' + hintMessage))
+  res.end()
+}
+
 export function ensureServingAccess(
   url: string,
   server: ViteDevServer,
   res: ServerResponse,
   next: Connect.NextFunction,
 ): boolean {
-  if (isFileServingAllowed(url, server)) {
+  const servingAccessResult = checkServingAccess(url, server)
+  if (servingAccessResult === 'allowed') {
     return true
   }
-  if (isFileReadable(cleanUrl(url))) {
-    const urlMessage = `The request url "${url}" is outside of Vite serving allow list.`
-    const hintMessage = `
-${server.config.server.fs.allow.map((i) => `- ${i}`).join('\n')}
-
-Refer to docs https://vitejs.dev/config/server-options.html#server-fs-allow for configurations and more details.`
-
-    server.config.logger.error(urlMessage)
-    server.config.logger.warnOnce(hintMessage + '\n')
-    res.statusCode = 403
-    res.write(renderRestrictedErrorHTML(urlMessage + '\n' + hintMessage))
-    res.end()
+  if (servingAccessResult === 'denied') {
+    respondWithAccessDenied(url, server, res)
   } else {
     // if the file doesn't exist, we shouldn't restrict this path as it can
     // be an API call. Middlewares would issue a 404 if the file isn't handled

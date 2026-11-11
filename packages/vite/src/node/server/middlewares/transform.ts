@@ -1,5 +1,6 @@
 import path from 'node:path'
 import fsp from 'node:fs/promises'
+import type { ServerResponse } from 'node:http'
 import type { Connect } from 'dep-types/connect'
 import colors from 'picocolors'
 import type { ExistingRawSourceMap } from 'rollup'
@@ -16,7 +17,11 @@ import {
   removeTimestampQuery,
 } from '../../utils'
 import { send } from '../send'
-import { ERR_LOAD_URL, transformRequest } from '../transformRequest'
+import {
+  ERR_DENIED_ID,
+  ERR_LOAD_URL,
+  transformRequest,
+} from '../transformRequest'
 import { applySourcemapIgnoreList } from '../sourcemap'
 import { isHTMLProxy } from '../../plugins/html'
 import { DEP_VERSION_RE, FS_PREFIX } from '../../constants'
@@ -34,7 +39,11 @@ import { ERR_CLOSED_SERVER } from '../pluginContainer'
 import { getDepsOptimizer } from '../../optimizer'
 import { cleanUrl, unwrapId, withTrailingSlash } from '../../../shared/utils'
 import { NULL_BYTE_PLACEHOLDER } from '../../../shared/constants'
-import { ensureServingAccess } from './static'
+import {
+  checkServingAccess,
+  ensureServingAccess,
+  respondWithAccessDenied,
+} from './static'
 
 const debugCache = createDebugger('vite:cache')
 
@@ -45,6 +54,37 @@ const trailingQuerySeparatorsRE = /[?&]+$/
 const urlRE = /[?&]url\b/
 const rawRE = /[?&]raw\b/
 const inlineRE = /[?&]inline\b/
+const svgRE = /\.svg\b/
+
+function isServingAccessCheckRequired(url: string) {
+  return (
+    rawRE.test(url) || urlRE.test(url) || inlineRE.test(url) || svgRE.test(url)
+  )
+}
+
+function deniedServingAccessForTransform(
+  url: string,
+  server: ViteDevServer,
+  res: ServerResponse,
+  next: Connect.NextFunction,
+) {
+  return (
+    isServingAccessCheckRequired(url) &&
+    !ensureServingAccess(url, server, res, next)
+  )
+}
+
+/**
+ * Side-effect free variant used for resolved ids. The response for a denied id
+ * is sent by the `ERR_DENIED_ID` handler, as the transform result (and thus the
+ * error) may be shared by concurrent requests.
+ */
+function isServerAccessDeniedForTransform(id: string, server: ViteDevServer) {
+  return (
+    isServingAccessCheckRequired(id) &&
+    checkServingAccess(id, server) !== 'allowed'
+  )
+}
 
 /**
  * A middleware that short-circuits the middleware chain to serve cached transformed modules
@@ -176,10 +216,8 @@ export function transformMiddleware(
         '',
       )
       if (
-        (rawRE.test(urlWithoutTrailingQuerySeparators) ||
-          urlRE.test(urlWithoutTrailingQuerySeparators) ||
-          inlineRE.test(urlWithoutTrailingQuerySeparators)) &&
-        !ensureServingAccess(
+        !url.startsWith('/@id/\0') &&
+        deniedServingAccessForTransform(
           urlWithoutTrailingQuerySeparators,
           server,
           res,
@@ -228,6 +266,12 @@ export function transformMiddleware(
         // resolve, load and transform using the plugin container
         const result = await transformRequest(url, server, {
           html: req.headers.accept?.includes('text/html'),
+          allowId(id) {
+            return (
+              id.startsWith('\0') ||
+              !isServerAccessDeniedForTransform(id, server)
+            )
+          },
         })
         if (result) {
           const depsOptimizer = getDepsOptimizer(server.config, false) // non-ssr
@@ -297,6 +341,17 @@ export function transformMiddleware(
       if (e?.code === ERR_LOAD_URL) {
         // Let other middleware handle if we can't load the url via transformRequest
         return next()
+      }
+      if (e?.code === ERR_DENIED_ID) {
+        const id: string = e.id
+        const servingAccessResult = checkServingAccess(id, server)
+        if (servingAccessResult === 'denied') {
+          respondWithAccessDenied(id, server, res)
+          return
+        }
+        if (servingAccessResult === 'fallback') {
+          return next()
+        }
       }
       return next(e)
     }
